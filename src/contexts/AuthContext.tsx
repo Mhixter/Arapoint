@@ -136,53 +136,53 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const register = async (name: string, email: string, password: string): Promise<boolean> => {
-    try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password
-      });
+  try {
+    // 1️⃣ Sign up the user
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email,
+      password
+    });
 
-      if (authError) {
-        console.error('Registration error:', authError);
+    if (authError) {
+      console.error('Registration error:', authError);
+      return false;
+    }
+
+    // 2️⃣ Create profile in 'profiles' table
+    if (authData.user) {
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .insert({
+          user_id: authData.user.id,
+          name,
+          email,
+          wallet_balance: 0,
+          role: 'user'
+        })
+        .select(); // returns an array
+
+      if (profileError) {
+        console.error('Profile creation error:', profileError);
         return false;
       }
 
-      if (authData.user) {
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            user_id: authData.user.id,
-            name,
-            email,
-            wallet_balance: 0,
-            role: 'user'
-          })
-          .select()
-          .maybeSingle();
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-          return false;
-        }
-
-        if (profile) {
-          setUser({
-            id: profile.id,
-            name: profile.name,
-            email: profile.email,
-            role: profile.role,
-            wallet: profile.wallet_balance
-          });
-          return true;
-        }
-      }
-      return false;
-    } catch (error) {
-      console.error('Registration error:', error);
-      return false;
+      const profile = profileData[0]; // pick the first record
+      setUser({
+        id: profile.user_id,
+        name: profile.name,
+        email: profile.email,
+        role: profile.role,
+        wallet: profile.wallet_balance
+      });
+      return true;
     }
-  };
 
+    return false;
+  } catch (error) {
+    console.error('Registration error:', error);
+    return false;
+  }
+};
   const logout = async () => {
     try {
       await supabase.auth.signOut();
