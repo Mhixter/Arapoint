@@ -1,30 +1,29 @@
-import React, { useState } from "react";
-import { useAuth } from "../contexts/AuthContext";
+// src/pages/Register.tsx
+import React, { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../components/Toast';
 
-export const Register = () => {
+export const Register: React.FC = () => {
   const { signUp } = useAuth();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const toast = useToast();
+  const [name,email,password] = [useState(''), useState(''), useState('')];
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e:any) => {
     e.preventDefault();
     setLoading(true);
-    const res = await signUp(name, email, password);
+    const res = await signUp(name[0], email[0], password[0]);
     setLoading(false);
-    if (!res.success) setMsg(res.error || "Registration failed");
-    else setMsg("Registered successfully. Check your email if confirmation is required.");
+    if (!res.success) return toast.push(res.message || 'Registration failed', 'error');
+    toast.push('Registered successfully. Check your email if confirmation required.', 'success');
   };
 
   return (
     <form onSubmit={handleSubmit}>
-      <input placeholder="Full name" value={name} onChange={e=>setName(e.target.value)} required />
-      <input placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} required />
-      <input placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} required />
-      <button type="submit" disabled={loading}>Register</button>
-      {msg && <p>{msg}</p>}
+      <input placeholder="Full name" value={name[0]} onChange={e=>name[1](e.target.value)} required />
+      <input placeholder="Email" value={email[0]} onChange={e=>email[1](e.target.value)} required />
+      <input placeholder="Password" type="password" value={password[0]} onChange={e=>password[1](e.target.value)} required />
+      <button type="submit" disabled={loading}>{loading ? 'Signing up...' : 'Sign up'}</button>
     </form>
   );
 };
