@@ -52,5 +52,5 @@ const Dashboard: React.FC = () => {
     </div>
   );
 };
-const Dashboard = () => { ... }
+const Dashboard = () => {  }
 export default Dashboard;
