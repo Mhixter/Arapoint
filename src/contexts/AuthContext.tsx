@@ -1,13 +1,6 @@
 // src/contexts/AuthContext.tsx
-import React, {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  ReactNode
-} from "react";
-import { createClient, SupabaseClient, Session, User } from "@supabase/supabase-js";
-
+import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL!;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY!;
 const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -15,10 +8,8 @@ const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 type Profile = {
   id: string;
   user_id: string;
-  name?: string | null;
+  name?: string|null;
   email: string;
-  phone?: string | null;
-  avatar_url?: string | null;
   wallet_balance: number;
   role: string;
   status: string;
@@ -26,240 +17,243 @@ type Profile = {
   updated_at: string;
 };
 
-type AuthContextType = {
+type AuthCtx = {
   profile: Profile | null;
   loading: boolean;
   isAuthenticated: boolean;
   isAdmin: boolean;
-  signUp: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  signIn: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  signUp: (name:string,email:string,password:string) => Promise<{success:boolean; message?:string}>;
+  signIn: (email:string,password:string) => Promise<{success:boolean; message?:string}>;
   signOut: () => Promise<void>;
-  sendPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
-  updateProfile: (patch: Partial<Profile>) => Promise<{ success: boolean; profile?: Profile; error?: string }>;
+  resendVerification: (email:string) => Promise<{success:boolean; message?:string}>;
+  sendPasswordReset: (email:string) => Promise<{success:boolean; message?:string}>;
+  updateProfile: (patch:Partial<Profile>) => Promise<{success:boolean; profile?:Profile; message?:string}>;
 };
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
+const AuthContext = createContext<AuthCtx | undefined>(undefined);
 export const useAuth = () => {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
+  const c = useContext(AuthContext);
+  if (!c) throw new Error('useAuth used outside AuthProvider');
+  return c;
 };
 
-export const AuthProvider = ({ children }: { children: ReactNode }) => {
+export const AuthProvider: React.FC<{children:ReactNode}> = ({ children }) => {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
 
-  // helper: load profile by user id
   const loadProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from<Profile>("profiles")
-        .select("*")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (error) {
-        console.error("loadProfile error:", error);
-        return null;
-      }
-      return data ?? null;
-    } catch (err) {
-      console.error("loadProfile exception:", err);
+    const { data, error } = await supabase.from<Profile>('profiles').select('*').eq('user_id', userId).maybeSingle();
+    if (error) {
+      console.error('loadProfile error', error);
       return null;
     }
+    return data ?? null;
   };
 
   useEffect(() => {
     const init = async () => {
       setLoading(true);
       try {
-        const {
-          data: { session }
-        } = await supabase.auth.getSession();
-        const user = session?.user ?? null;
-
-        if (user) {
-          const p = await loadProfile(user.id);
-          if (p) setProfile(p);
-        } else {
-          setProfile(null);
-        }
-      } catch (err) {
-        console.error("Auth init error:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    init();
-
-    // subscribe to auth changes
-    const {
-      data: { subscription }
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setLoading(true);
-      try {
+        const { data: { session } } = await supabase.auth.getSession();
         const user = session?.user ?? null;
         if (user) {
-          const p = await loadProfile(user.id);
+          let p = await loadProfile(user.id);
+          // fallback: if no profile exist, create one automatically (helpful if signup profile creation failed)
+          if (!p) {
+            const { data: created, error: createErr } = await supabase.from('profiles').insert({
+              user_id: user.id,
+              email: user.email,
+              name: user.user_metadata?.full_name ?? null,
+              wallet_balance: 0,
+              role: 'user',
+              status: 'active'
+            }).select().maybeSingle();
+            if (createErr) console.error('auto-create profile error', createErr);
+            p = created ?? null;
+          }
           setProfile(p);
         } else {
           setProfile(null);
         }
       } catch (err) {
-        console.error("onAuthStateChange error:", err);
+        console.error('auth init', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    init();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setLoading(true);
+      try {
+        const user = session?.user ?? null;
+        if (user) {
+          let p = await loadProfile(user.id);
+          if (!p) {
+            const { data: created } = await supabase.from('profiles').insert({
+              user_id: user.id,
+              email: user.email,
+              wallet_balance: 0,
+              role: 'user',
+              status: 'active'
+            }).select().maybeSingle();
+            p = created ?? null;
+          }
+          setProfile(p);
+        } else setProfile(null);
+      } catch (err) {
+        console.error('onAuthStateChange', err);
       } finally {
         setLoading(false);
       }
     });
 
-    return () => {
-      subscription?.unsubscribe();
-    };
+    return () => subscription?.unsubscribe();
   }, []);
 
-  // SIGN UP: supabase auth signUp + manual profile creation
-  const signUp = async (name: string, email: string, password: string) => {
+  // helper: map Supabase error to user-friendly message
+  const mapAuthError = (err:any) => {
+    if (!err) return 'Unknown error';
+    const msg = err?.message || String(err);
+    if (/email rate limit exceeded/i.test(msg)) return 'Too many signup attempts. Try again later or use a different email.';
+    if (/Email signups are disabled/i.test(msg)) return 'Email signups are disabled in Supabase (enable them in Auth settings).';
+    if (/Password should be at least/i.test(msg)) return msg;
+    return msg;
+  };
+
+  const signUp = async (name:string,email:string,password:string) => {
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
-        password
-      });
-
+      const { data: authData, error: authError } = await supabase.auth.signUp({ email, password });
       if (authError) {
-        console.error("signUp authError:", authError);
-        return { success: false, error: authError.message };
+        console.error('signUp error', authError);
+        return { success:false, message: mapAuthError(authError) };
       }
-
-      // If email confirmations are enabled, user may need to confirm - authData.user.id still available
       const userId = authData.user?.id;
-      if (!userId) {
-        return { success: false, error: "No auth user id returned" };
-      }
+      if (!userId) return { success:false, message:'No user id returned - check email confirmation settings.' };
 
-      // create profile manually
-      const { data: profileData, error: profileError } = await supabase
-        .from<Profile>("profiles")
-        .insert({
-          user_id: userId,
-          name,
-          email,
-          wallet_balance: 0,
-          role: "user",
-          status: "active"
-        })
-        .select()
-        .maybeSingle();
+      // create profile manually (we expect auth settings 'create profile automatically' to be OFF)
+      const { data: profileData, error: profileError } = await supabase.from<Profile>('profiles').insert({
+        user_id: userId,
+        name,
+        email,
+        wallet_balance: 0,
+        role: 'user',
+        status: 'active'
+      }).select().maybeSingle();
 
       if (profileError) {
-        console.error("signUp profile creation error:", profileError);
-        // Optionally: delete the auth user if profile creation fails?
-        return { success: false, error: profileError.message };
+        console.error('profile creation error', profileError);
+        // If profile creation fails, remove the auth user? optional - not doing that automatically
+        return { success:false, message: 'Signup succeeded but creating profile failed: ' + profileError.message };
       }
+      if (profileData) setProfile(profileData);
+      return { success:true };
+    } catch (err:any) {
+      console.error('signUp exception', err);
+      return { success:false, message: mapAuthError(err) };
+    }
+  };
 
-      if (profileData) {
-        setProfile(profileData);
-        return { success: true };
+  const signIn = async (email:string, password:string) => {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        // note: in many cases supabase returns null user without error when email confirm required
+        console.error('signIn error', error);
+        return { success:false, message: mapAuthError(error) };
+      }
+      if (!data.user) {
+        // handle email confirmation required / empty response
+        return { success:false, message:'Login failed. Make sure your email is confirmed or try resetting password.' };
+      }
+      const p = await loadProfile(data.user.id);
+      if (!p) {
+        // fallback auto-create profile
+        const { data: created, error: createErr } = await supabase.from('profiles').insert({
+          user_id: data.user.id,
+          email: data.user.email,
+          name: data.user.user_metadata?.full_name ?? null,
+          wallet_balance: 0,
+          role: 'user',
+          status: 'active'
+        }).select().maybeSingle();
+        if (createErr) {
+          console.error('auto-create profile during signIn failed', createErr);
+          return { success:false, message: 'Signed in but failed to create profile: ' + createErr.message };
+        }
+        if (created) setProfile(created);
       } else {
-        return { success: false, error: "Profile not created" };
+        setProfile(p);
       }
-    } catch (err: any) {
-      console.error("signUp exception:", err);
-      return { success: false, error: err?.message ?? "Unknown error" };
+      return { success:true };
+    } catch (err:any) {
+      console.error('signIn exception', err);
+      return { success:false, message: mapAuthError(err) };
     }
   };
 
-  // SIGN IN
-  const signIn = async (email: string, password: string) => {
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
-
-      if (error) {
-        console.error("signIn error:", error);
-        return { success: false, error: error.message };
-      }
-
-      const userId = data.user?.id;
-      if (!userId) return { success: false, error: "No user returned" };
-
-      const p = await loadProfile(userId);
-      if (p) setProfile(p);
-      return { success: true };
-    } catch (err: any) {
-      console.error("signIn exception:", err);
-      return { success: false, error: err?.message ?? "Unknown error" };
-    }
-  };
-
-  // SIGN OUT
   const signOut = async () => {
-    try {
-      await supabase.auth.signOut();
-      setProfile(null);
-    } catch (err) {
-      console.error("signOut error:", err);
-    }
+    await supabase.auth.signOut();
+    setProfile(null);
   };
 
-  // PASSWORD RESET (send reset email)
-  const sendPasswordReset = async (email: string) => {
+  const resendVerification = async (email:string) => {
     try {
-      const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: import.meta.env.VITE_PASSWORD_RESET_REDIRECT // optional
+      // Supabase doesn't have a dedicated 'resend confirmation' endpoint in JS client v2,
+      // we can call signUp with redirectTo to force resend, but that may be limited.
+      // Best practice: build a server endpoint using service_role key to call /invite or /admin API.
+      // Here we use resetPasswordForEmail as a friendly fallback to make sure the user gets an email.
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: import.meta.env.VITE_PASSWORD_RESET_REDIRECT
       });
-      if (error) {
-        console.error("Password reset error:", error);
-        return { success: false, error: error.message };
-      }
-      return { success: true };
-    } catch (err: any) {
-      console.error("Password reset exception:", err);
-      return { success: false, error: err?.message ?? "Unknown error" };
+      if (error) return { success:false, message: mapAuthError(error) };
+      return { success:true, message: 'If an account exists we sent an email.' };
+    } catch (err:any) {
+      return { success:false, message: mapAuthError(err) };
     }
   };
 
-  // UPDATE PROFILE
-  const updateProfile = async (patch: Partial<Profile>) => {
-    if (!profile) return { success: false, error: "Not authenticated" };
+  const sendPasswordReset = async (email:string) => {
     try {
-      const { data, error } = await supabase
-        .from<Profile>("profiles")
-        .update(patch)
-        .eq("id", profile.id)
-        .select()
-        .maybeSingle();
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: import.meta.env.VITE_PASSWORD_RESET_REDIRECT
+      });
+      if (error) return { success:false, message: mapAuthError(error) };
+      return { success:true, message:'Password reset email sent if account exists.' };
+    } catch (err:any) {
+      return { success:false, message: mapAuthError(err) };
+    }
+  };
 
-      if (error) {
-        console.error("updateProfile error:", error);
-        return { success: false, error: error.message };
-      }
+  const updateProfile = async (patch:Partial<Profile>) => {
+    if (!profile) return { success:false, message:'Not authenticated' };
+    try {
+      const { data, error } = await supabase.from<Profile>('profiles').update(patch).eq('id', profile.id).select().maybeSingle();
+      if (error) return { success:false, message: error.message };
       if (data) {
         setProfile(data);
-        return { success: true, profile: data };
-      } else {
-        return { success: false, error: "Profile update returned no data" };
+        return { success:true, profile:data };
       }
-    } catch (err: any) {
-      console.error("updateProfile exception:", err);
-      return { success: false, error: err?.message ?? "Unknown error" };
+      return { success:false, message:'No profile returned' };
+    } catch (err:any) {
+      return { success:false, message: err?.message ?? 'Unknown' };
     }
   };
 
-  const value: AuthContextType = {
-    profile,
-    loading,
-    isAuthenticated: !!profile,
-    isAdmin: profile?.role === "admin",
-    signUp,
-    signIn,
-    signOut,
-    sendPasswordReset,
-    updateProfile
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{
+      profile,
+      loading,
+      isAuthenticated: !!profile,
+      isAdmin: profile?.role === 'admin',
+      signUp,
+      signIn,
+      signOut,
+      resendVerification,
+      sendPasswordReset,
+      updateProfile
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
 };
