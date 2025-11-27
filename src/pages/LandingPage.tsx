@@ -273,5 +273,5 @@ const LandingPage: React.FC = () => {
     </div>
   );
 };
-
+const LandingPage = () => { ... }
 export default LandingPage;
