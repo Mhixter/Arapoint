@@ -50,5 +50,6 @@ const Admin: React.FC = () => {
     </div>
   );
 };
-const LandingPage = () => { ... }
-export default LandingPage;
+
+const Admin = () => { ... }
+export default Admin;
